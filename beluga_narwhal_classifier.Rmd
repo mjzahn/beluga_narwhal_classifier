@@ -1,0 +1,304 @@
+---
+title: "Beluga and Narwhal Acoustic Classifier"
+author:
+  - Marie Zahn
+  - School of Aquatic and Fishery Sciences, University of Washington, USA
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+*Click classifiers used in PAMGuard click detector module:*
+Unclassified, Code 0 (black dot)
+4-20 kHz, Code 1 (orange diamond)
+20-50 kHz, Code 2 (red hexagon)
+50-70 kHz, Code 3 (blue circle)
+70-100 kHz, Code 4 (green star)
+100-150 kHz, Code 5 (yellow square)
+150-250 kHz, Code 6 (red triangle)
+
+*Data summary:*
+Total time: 8:38:55
+Total beluga: 1:03:20
+Total narwhal: 7:38:15
+
+*PAMpal*
+To install the latest version from GitHub, first make sure that you have Rtools installed, then run the following code to install PAMpal.
+
+Visit <https://taikisan21.github.io/PAMpal/> for detailed instructions.
+
+## BANTER classifier
+
+```{r run BANTER}
+## load required packages
+library(rfPermute)
+library(ggplot2)
+library(PAMpal)
+library(banter)
+
+## install PAMpal package from GitHub
+# devtools::install_github('TaikiSan21/PAMpal')
+
+## install BANTER package from GitHub
+# devtools::install_github('ericarcher/banter')
+
+## load data - narwhal and beluga echolocation parameters obtained from PAMGuard and PAMpal
+load(file='Data/Narwhal-Beluga-data_043021.rdata')
+
+## export banter model
+banterAll <- export_banter(Narwhal.Beluga.data)
+
+## alternatively, load banterAll file here:
+load(file='Data/banterAll_043021.rdata')
+
+## initialize banter model
+bant.mdl <- initBanterModel(banterAll$events)
+
+## run RF models for each Detector added-------------------------------------
+bant.mdl <- addBanterDetector(
+  bant.mdl, 
+  data = banterAll$detectors[c(2,3,4,5)], # does not include Det 1 and 6
+  ntree = 10000, 
+  sampsize = 50,
+  importance = TRUE
+)
+## look at summary of Detector models
+## this shows correct classification rate for each species in each detector
+summary(bant.mdl)
+plotDetectorTrace(bant.mdl)
+
+## run Event model------------------------------------------------------------
+bant.mdl <- runBanterModel(bant.mdl, ntree = 10000, sampsize = 9)
+## look at summary for Event model
+summary(bant.mdl)
+
+## get RF data from banter model
+event.rf <- getBanterModel(bant.mdl, "event")
+## get RF data for specific detecto - example of Det 5:
+(event.rf.Det5 <- getBanterModel(bant.mdl, "Click_Detector_5"))
+
+## get predictor names for event level RF model
+colnames(bant.mdl@model.data)
+
+## can also load banter model results from paper here:
+load(file='Data/bantMDL-Narwhal-Beluga-classification_043021.rdata')
+
+## SUMMARIES
+summary(bant.mdl)
+plotVotes(event.rf)
+proximityPlot(event.rf)
+casePredictions(event.rf)
+```
+
+```{r varImp}
+## traditional variable importance plot from rf
+varImpPlot(event.rf)
+## produces heatmap of variable importance scores
+impHeatmap(event.rf)
+
+## Identify most important variables in event model
+bant.imp <-  data.frame(importance(event.rf))
+bant.4imp <- bant.imp[order(bant.imp$MeanDecreaseAccuracy, decreasing=TRUE),][1:4,] # select top 4 important event stage predictors
+bant.4imp # Look at the predictors and use Detector names for next step
+
+## Use most important Detectors identified in previous step to determine which sonar parameters are most important
+getDetectorNames(bant.mdl)
+bant.det2.rf <- getBanterModel(bant.mdl, "Click_Detector_2")
+bant.det3.rf <- getBanterModel(bant.mdl, "Click_Detector_3")
+
+## select and order detector importance data
+Det2.imp <- data.frame(importance(bant.det2.rf))
+Det3.imp <- data.frame(importance(bant.det3.rf))
+
+Det2.top.imp <- Det2.imp[order(Det2.imp$MeanDecreaseAccuracy, 
+                               decreasing=TRUE),3, drop = FALSE]
+Det3.top.imp <- Det3.imp[order(Det3.imp$MeanDecreaseAccuracy, 
+                               decreasing=TRUE),3, drop = FALSE]
+```
+
+***
+
+## Single Random Forests classifier
+
+```{r RF Model}
+## load required libraries
+library(randomForest)
+library(caret)
+
+## You can load RF model object from paper here:
+load(file = 'Data/ranfor_classification_043021.rdata')
+
+## Or, you can run the RF model yourself here:
+
+## empty master data frame for entering values in loop below
+master_df <- as.data.frame(matrix(nrow = 0, ncol = 25))
+
+events <- Narwhal.Beluga.data@events
+nevents <- length(Narwhal.Beluga.data@events)
+events_names <- names(events)
+
+## loop to extract desired sonar parameters from PAMpal data (removed PeakHz parameter because it is the same as peak)
+for (i in 1:nevents){
+  ndetectors <- length(events[[events_names[i]]]@detectors)
+  detector_names <- names(events[[events_names[i]]]@detectors)
+  detectors <- events[[events_names[i]]]@detectors
+  
+  for (j in (1:ndetectors)){
+    nclicks <- length(detectors[[j]]$eventLabel)
+
+    temp_df <- matrix(nrow = nclicks, ncol = 25) # edit these for number sonar parameters extracted
+    colnames(temp_df) <- c("event", "species", "detector", "duration", "peakTime", "peak", "peak2", "peak3", "trough", "trough2", "peakToPeak2", "peakToPeak3", "peak2ToPeak3", "Q_10dB", "Q_3dB", "centerHz_10dB", "centerHz_3dB", "fmin_10dB", "fmax_10dB", "fmin_3dB", "fmax_3dB", "BW_10dB", "BW_3dB", "noiseLevel", "dBPP")
+
+    temp_df[,"event"] <- rep(events_names[i], nclicks)
+    temp_df[,"detector"] <- rep(detector_names[j], nclicks)
+    temp_df[,"species"] <- detectors[[j]]$eventLabel # narwhal = 085; beluga = 045
+    temp_df[,"duration"] <- detectors[[j]]$peak
+    temp_df[,"peakTime"] <- detectors[[j]]$peak
+    temp_df[,"peak"] <- detectors[[j]]$peak
+    temp_df[,"peak2"] <- detectors[[j]]$peak2
+    temp_df[,"peak3"] <- detectors[[j]]$peak3
+    temp_df[,"trough"] <- detectors[[j]]$trough
+    temp_df[,"trough2"] <- detectors[[j]]$trough2
+    temp_df[,"peakToPeak2"] <- detectors[[j]]$peakToPeak2
+    temp_df[,"peakToPeak3"] <- detectors[[j]]$peakToPeak3
+    temp_df[,"peak2ToPeak3"] <- detectors[[j]]$peak2ToPeak3
+    temp_df[,"Q_10dB"] <- detectors[[j]]$Q_10dB
+    temp_df[,"Q_3dB"] <- detectors[[j]]$Q_3dB
+    #temp_df[,"PeakHz_10dB"] <- detectors[[j]]$PeakHz_10dB # supposed to be peak freq as well
+    #temp_df[,"PeakHz_3dB"] <- detectors[[j]]$PeakHz_3dB # supposed to be peak freq as well
+    temp_df[,"centerHz_10dB"] <- detectors[[j]]$centerHz_10dB
+    temp_df[,"centerHz_3dB"] <- detectors[[j]]$centerHz_3dB
+    temp_df[,"fmin_10dB"] <- detectors[[j]]$fmin_10dB
+    temp_df[,"fmax_10dB"] <- detectors[[j]]$fmax_10dB
+    temp_df[,"fmin_3dB"] <- detectors[[j]]$fmin_3dB
+    temp_df[,"fmax_3dB"] <- detectors[[j]]$fmax_3dB
+    temp_df[,"BW_10dB"] <- detectors[[j]]$BW_10dB
+    temp_df[,"BW_3dB"] <- detectors[[j]]$BW_3dB
+    temp_df[,"noiseLevel"] <- detectors[[j]]$noiseLevel
+    temp_df[,"dBPP"] <- detectors[[j]]$dBPP
+    
+    master_df <- rbind(master_df, temp_df)
+  }
+  
+  ## change species code to species name for simplicity
+  master_df$species[which(master_df$species == "045")] <- "Beluga"
+  master_df$species[which(master_df$species == "085")] <- "Narwhal"
+
+}
+
+## make event names a factor
+master_df$event <- factor(master_df$event, levels = unique(master_df$event))
+
+params <- c("duration", "peakTime", "peak", "peak2", "peak3", "trough", "trough2", "peakToPeak2", "peakToPeak3", "peak2ToPeak3", "Q_10dB", "Q_3dB", "centerHz_10dB", "centerHz_3dB", "fmin_10dB", "fmax_10dB", "fmin_3dB", "fmax_3dB", "BW_10dB", "BW_3dB", "noiseLevel", "dBPP")
+
+for (i in 1:length(params)){
+  master_df[,params[i]] <- as.numeric(master_df[,params[i]])
+}
+
+## group data by event and then average all click sonar parameters for each event
+Narluga.data <- master_df %>% group_by(event) %>% 
+  summarise_all(funs(if(is.numeric(.)) mean(.) else first(.)))
+
+## add ICI to master dataframe
+master_ici <- as.data.frame(matrix(nrow = 0, ncol = 1))
+for (e in seq_along(events(Narwhal.Beluga.data))){
+  # pull out mean ici for the event
+  ici <- events[[events_names[e]]]@ancillary[["measures"]][["All_ici"]]
+  master_ici <- rbind(master_ici, ici)
+}
+colnames(master_ici) <- "ici"
+
+## combine ici with master df
+Narluga.data <- bind_cols(Narluga.data, master_ici)
+
+## remove event and detector column
+Narluga.data.full <- Narluga.data
+Narluga.data <- Narluga.data.full[,-c(1,3)]
+
+## Run RANDOM FOREST model -----------------------------------------------------
+
+## make species a factor
+Narluga.data$species <- as.factor(Narluga.data$species)
+## remove peakTime, dBPP, and noiseLevel
+Narluga.data <- Narluga.data %>% select(-c("peakTime", "dBPP", "noiseLevel"))
+
+## Run random forests model
+ranfor <- randomForest(species ~ ., 
+                       data = Narluga.data, 
+                       ntree = 10000, 
+                       importance = TRUE,
+                       replace = FALSE, 
+                       proximity = TRUE, 
+                       sampsize = c(9, 9))
+
+ranfor
+
+## Predictions from the ensemble of all the trees
+(predict <- ranfor$predicted)
+
+## variables sorted in decreasing order of importance
+varImpPlot(ranfor)
+proximityPlot(ranfor)
+
+## identify misclassifications ------------------------------------------------
+casePredict <- casePredictions(ranfor)
+
+misclass <- casePredict %>% 
+  filter(is.correct== FALSE) %>%
+  select(case.id)
+misclass
+
+Narluga.data.full[misclass$case.id,1:2]
+
+```
+
+```{r RF sensitivity analyses}
+## run the RF model over all combinations of mtry and sampsize
+
+## make master df with all possible combinations of mtry and sampsize
+mtry <- rep(2:19, each = 17)
+sampsize <- rep(2:18, 18)
+params <- cbind(mtry, sampsize)
+
+## loop over all possible combinations
+master_df <- as.data.frame(matrix(nrow = nrow(params), ncol = 1))
+yy <- Narluga.data$species
+
+for (i in 1:nrow(params)){
+ranfor <- randomForest(species ~ ., 
+                       data = Narluga.data, 
+                       ntree = 10000, 
+                       importance = TRUE,
+                       replace = FALSE, 
+                       proximity = TRUE, 
+                       sampsize = as.vector(c(params[i,2],params[i,2])),
+                       mtry = params[i,1])
+## calculate accuracy
+rfpred <- predict(ranfor)
+accuracy <- caret::confusionMatrix(rfpred, yy)
+master_df[i,1] <- accuracy$overall[1]
+
+}
+
+## combine dfs
+sensitivity <- cbind(params, master_df)
+sensitivity
+
+## calculate % range of model output
+max(sensitivity$V1) - min(sensitivity$V1)
+
+```
+
+```{r significance}
+rfpred <- predict(ranfor)
+yy <- as.factor(Narluga.data$species)
+## calculate accuracy and kappa coefficient
+caret <- caret::confusionMatrix(rfpred, yy)
+caret$overall[1]
+```
+
