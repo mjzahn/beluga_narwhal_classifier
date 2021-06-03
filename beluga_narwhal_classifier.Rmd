@@ -82,6 +82,10 @@ event.rf <- getBanterModel(bant.mdl, "event")
 ## get RF data for specific detecto - example of Det 5:
 (event.rf.Det5 <- getBanterModel(bant.mdl, "Click_Detector_5"))
 
+## examine model stability
+rfPermute::plotTrace(event.rf)
+rfPermute::plotInbag(event.rf)
+
 ## get predictor names for event level RF model
 colnames(bant.mdl@model.data)
 
