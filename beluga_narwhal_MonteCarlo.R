@@ -30,7 +30,7 @@ runBanter <- function(x) {
   
   ## run Event model
   bant.mdl <- runBanterModel(bant.mdl, ntree = 10000, sampsize = 9)
-
+  
 }
 
 ## use banter function to run Monte Carlo sensitivity test --------------------------------
