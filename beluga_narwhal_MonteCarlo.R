@@ -37,6 +37,7 @@ runBanter <- function(x) {
 
 ## load data - narwhal and beluga echolocation parameters obtained from PAMGuard and PAMpal
 load(file='Data/Narwhal-Beluga-data_043021.rdata')
+load(file='Data/encounters.rdata')
 
 ## specify number of monte carlo simulations
 nsims <- 1000
